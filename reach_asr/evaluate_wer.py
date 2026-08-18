@@ -114,6 +114,20 @@ def main() -> None:
     parser.add_argument("--skip-clean", action="store_true")
     args = parser.parse_args()
 
+    # Checked before the model imports, and long before the expensive passes.
+    # The two zero-shot passes are ~10 min of autoregressive generation, and
+    # discovering a missing adapter only at step [3/3] throws all of it away.
+    # Not hypothetical: a PEFT/torchao version clash killed training on Kaggle
+    # while the eval command in the same cell ran on regardless -- `!a` then
+    # `!b` in one notebook cell does not short-circuit on failure.
+    if args.adapter is not None and not args.adapter.exists():
+        raise SystemExit(
+            f"adapter not found: {args.adapter}\n"
+            "Training did not produce one -- check the train step's output for an "
+            "error before rerunning.\nTo measure only the zero-shot baselines, drop "
+            "--adapter."
+        )
+
     from transformers import WhisperForConditionalGeneration, WhisperProcessor
     from transformers.models.whisper.english_normalizer import EnglishTextNormalizer
 
