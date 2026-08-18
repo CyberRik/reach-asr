@@ -42,13 +42,40 @@ import time
 from pathlib import Path
 
 
-def run(command: list[str]) -> None:
+def run(command: list[str], produces: list[Path] | None = None) -> None:
+    """Run a step, judging it by what it produced rather than only by its code.
+
+    A step can do all of its work and still exit non-zero: HF's streaming
+    downloader and torchaudio leave non-Python threads that can abort the
+    interpreter during finalization (SIGABRT, -6) *after* every output is
+    safely on disk. Failing the pipeline there throws away a completed corpus
+    build and makes the user redo twenty minutes of streaming for nothing.
+
+    So when a step declares its expected artifacts and all of them exist, a
+    non-zero exit is reported as a teardown warning rather than a failure. A
+    step with no declared artifacts still fails on a non-zero code -- the
+    leniency is scoped to cases where completion is independently checkable,
+    not applied blindly, because "ignore the exit code" as a general rule is
+    how a genuinely broken step gets to look successful.
+    """
     print(f"\n$ {' '.join(command)}\n", flush=True)
     started = time.time()
     result = subprocess.run(command)
+    elapsed = time.time() - started
+
     if result.returncode != 0:
-        raise SystemExit(f"step failed ({result.returncode}): {' '.join(command)}")
-    print(f"\n[done in {time.time() - started:.0f}s]", flush=True)
+        missing = [path for path in (produces or []) if not path.exists()]
+        if produces and not missing:
+            print(
+                f"\n[warning] exited {result.returncode} but every expected output is "
+                "present -- treating as a teardown crash, not a failure",
+                flush=True,
+            )
+        else:
+            detail = f"; missing {[str(p) for p in missing]}" if missing else ""
+            raise SystemExit(f"step failed ({result.returncode}){detail}: {' '.join(command)}")
+
+    print(f"\n[done in {elapsed:.0f}s]", flush=True)
 
 
 def main() -> None:
@@ -71,13 +98,16 @@ def main() -> None:
     data = Path("data")
 
     if not args.skip_build:
-        run([
-            python, "-m", "reach_asr.build_dataset",
-            "--train", str(args.train),
-            "--eval", str(args.eval),
-            "--snr-min", str(args.snr_min),
-            "--snr-max", str(args.snr_max),
-        ])
+        run(
+            [
+                python, "-m", "reach_asr.build_dataset",
+                "--train", str(args.train),
+                "--eval", str(args.eval),
+                "--snr-min", str(args.snr_min),
+                "--snr-max", str(args.snr_max),
+            ],
+            produces=[data / "train" / "manifest.jsonl", data / "eval" / "manifest.jsonl"],
+        )
     else:
         print("skipping corpus build (--skip-build)")
 

@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -214,3 +216,22 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # Hard exit, skipping interpreter finalization.
+    #
+    # HF's streaming downloader and torchaudio's backend both leave non-Python
+    # threads alive; on teardown one of them touches the GIL after the runtime
+    # has begun finalizing and CPython aborts with
+    #   Fatal Python error: PyGILState_Release: thread state ... must be current
+    # and exit code -6 (SIGABRT). Observed on Kaggle after a completely
+    # successful build -- both manifests written, every WAV on disk.
+    #
+    # There is nothing to clean up at this point: the manifests are closed by
+    # their `with` blocks and every WAV is written by torchaudio before main()
+    # returns, so the only thing finalization can still do here is crash. The
+    # explicit flushes cover stdout/stderr, which os._exit would otherwise drop.
+    #
+    # This is a batch script, so a hard exit is appropriate. Do NOT copy this
+    # into anything long-lived or anything holding an unflushed handle.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
