@@ -93,9 +93,10 @@ def stream_librispeech(split: str, limit: int, min_seconds: float, max_seconds: 
     """
     from datasets import load_dataset
 
-    dataset = load_dataset(
-        "openslr/librispeech_asr", "clean", split=split, streaming=True, trust_remote_code=True
-    )
+    # No trust_remote_code: datasets 4.x removed script-based loading entirely,
+    # and passing it now raises on an unexpected kwarg. LibriSpeech is
+    # parquet-converted on the Hub, so plain streaming is the supported path.
+    dataset = load_dataset("openslr/librispeech_asr", "clean", split=split, streaming=True)
     taken = 0
     for row in dataset:
         audio = row["audio"]
