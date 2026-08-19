@@ -1,0 +1,53 @@
+[project]
+name = "reach-asr"
+version = "0.1.0"
+description = "Noise-robust speech recognition for telephony-band emergency audio"
+requires-python = ">=3.11"
+
+# Kept deliberately thin. torch/torchaudio are NOT pinned here because the right
+# wheel depends on the machine (CPU wheels from the PyTorch index locally, the
+# CUDA build preinstalled on Kaggle) and a version pin in this file would fight
+# whichever one is already correct.
+dependencies = [
+    "torch",
+    "torchaudio",
+    "soundfile",
+]
+
+[project.optional-dependencies]
+# Corpus construction and fine-tuning. Not needed to serve a trained adapter.
+train = [
+    "transformers>=4.40",
+    "peft>=0.10",
+    "datasets>=2.19",
+    "accelerate",
+    "jiwer",
+]
+# Inference only. Split from `train` because the serving container has no reason
+# to carry datasets/accelerate -- they are several hundred MB of build tooling
+# that a GPU inference image should not be shipping.
+serve = [
+    "transformers>=4.40",
+    "peft>=0.10",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart",
+]
+dev = ["pytest", "ruff", "mypy", "httpx"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["reach_asr"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "UP", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
