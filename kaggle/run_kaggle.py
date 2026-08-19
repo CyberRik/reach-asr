@@ -10,27 +10,66 @@ Evaluation, not training, is what makes the small card painful: scoring is three
 passes of autoregressive generation over the eval split (clean, degraded
 baseline, degraded fine-tuned) and generation cannot be batched usefully at 4 GB.
 
+RUN THIS AS A BATCH JOB, NOT INTERACTIVELY
+------------------------------------------
+Use **Save Version -> Save & Run All (Commit)**. Do not babysit it in an
+interactive session.
+
+This is not a style preference, it is the difference between finishing and
+starting over. The full pipeline is ~50 minutes, and an interactive Kaggle
+session loses everything in /kaggle/working the moment it ends -- a kernel hang,
+a browser disconnect, an idle timeout, or hitting the power icon (which stops
+the session and tears down the container; only an in-place *restart* preserves
+the filesystem, and not dependably). A committed run executes headless on
+Kaggle's side and persists /kaggle/working as the version's output, downloadable
+afterwards. Learned the expensive way: a completed 20-minute fine-tune and a
+built corpus were both lost to a stopped session.
+
 SETUP
 -----
-1. Zip the `reach_asr/` package and upload it as a Kaggle Dataset named
-   `reach-asr` (Datasets -> New Dataset -> drag the folder in). No GitHub
-   involved, which avoids the CyberRik/Rik0411 credential mismatch entirely.
-2. New Notebook -> Settings: Accelerator **GPU T4 x2** (or P100), and
-   Internet **On** -- the corpora stream from Hugging Face at runtime.
-3. Add the `reach-asr` dataset to the notebook.
-4. In one cell:
+1. Zip the **whole repo** -- `reach_asr/` AND `kaggle/` -- and upload it as a
+   Kaggle Dataset (Datasets -> New Dataset -> drag the folder in). Note the
+   slug Kaggle assigns; it strips the hyphen ("reach-asr" -> "reachasr"). No
+   GitHub involved, which sidesteps the CyberRik/Rik0411 credential mismatch.
+2. New Notebook -> Settings: Accelerator **GPU T4 x2** (or P100), Internet
+   **On** -- the corpora stream from Hugging Face at runtime. Internet needs
+   phone verification on some accounts; check before starting.
+3. Add the dataset to the notebook.
+4. Cell 1 -- environment and code:
 
        !pip install -q jiwer peft
-       !cp -r /kaggle/input/reach-asr/reach_asr /kaggle/working/
+       !pip uninstall -y -q torchao   # Kaggle ships 0.10.0; PEFT demands >0.16
+       import pathlib, shutil
+       root = next(pathlib.Path('/kaggle/input').rglob('run_kaggle.py')).parent.parent
+       for item in root.iterdir():
+           dst = pathlib.Path('/kaggle/working') / item.name
+           if dst.is_dir(): shutil.rmtree(dst)
+           elif dst.exists(): dst.unlink()
+           (shutil.copytree if item.is_dir() else shutil.copy2)(item, dst)
+       print(sorted(p.name for p in pathlib.Path('/kaggle/working').iterdir()))
+
+   The rglob is deliberate: it finds the repo root whatever depth the zip
+   nested it at, instead of guessing the mount path.
+
+5. Cell 2 -- the pipeline:
+
        %cd /kaggle/working
+       !nvidia-smi --query-gpu=name,memory.total --format=csv
        !python kaggle/run_kaggle.py --train 2000 --eval 300
 
-5. Download `results/wer.json` and `runs/whisper-lora/adapter/` from the
-   notebook output when it finishes.
+6. **Save Version -> Save & Run All (Commit).** Close the tab; it runs without
+   you. When it finishes, open the version and download `results/wer.json` and
+   `runs/whisper-lora/adapter/` from its Output tab.
 
-Kaggle sessions are capped at 12 h and the GPU quota is 30 h/week, so a run this
-size costs well under 3% of a week's allowance -- there is room to iterate on
-the augmentation settings rather than treating one run as the answer.
+The uninstall in step 4 is load-bearing: PEFT's LoRA dispatcher calls
+is_torchao_available(), which *raises* on an incompatible version rather than
+returning False, so training dies at get_peft_model() before a single step. We
+use no torchao at all -- this is plain fp16 LoRA -- so removing it is the clean
+fix rather than fighting a version bump into the image.
+
+Kaggle allows 9 h GPU per session and 30 h/week, so a ~50 min run costs under 3%
+of a week's allowance. There is room to iterate on the augmentation settings
+rather than treating one run as the answer.
 """
 
 from __future__ import annotations

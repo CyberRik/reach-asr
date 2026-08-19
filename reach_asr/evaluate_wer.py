@@ -36,6 +36,20 @@ from typing import Any
 import torch
 
 
+def require_jiwer() -> None:
+    """Fail before the generation passes, not after them.
+
+    jiwer is only used at the very end, so importing it where it is used means a
+    missing dependency surfaces after ~10 min of autoregressive decoding has
+    already been thrown away. Kaggle's image does not ship it. Same reasoning as
+    the adapter check below: everything cheap that can fail should fail first.
+    """
+    try:
+        import jiwer  # noqa: F401
+    except ModuleNotFoundError as exc:  # pragma: no cover - environment-dependent
+        raise SystemExit("jiwer is not installed -- `pip install jiwer`") from exc
+
+
 def load_manifest(path: Path) -> list[dict[str, Any]]:
     with path.open(encoding="utf-8") as handle:
         return [json.loads(line) for line in handle]
@@ -63,7 +77,7 @@ def transcribe_all(
 
 
 def score(references: list[str], hypotheses: list[str], normalizer: Any) -> float:
-    import jiwer
+    import jiwer  # noqa: PLC0415  -- checked eagerly in main(); see require_jiwer
 
     refs = [normalizer(text) for text in references]
     hyps = [normalizer(text) for text in hypotheses]
@@ -113,6 +127,8 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=Path("results/wer.json"))
     parser.add_argument("--skip-clean", action="store_true")
     args = parser.parse_args()
+
+    require_jiwer()
 
     # Checked before the model imports, and long before the expensive passes.
     # The two zero-shot passes are ~10 min of autoregressive generation, and
@@ -192,6 +208,31 @@ def main() -> None:
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(results, indent=2), encoding="utf-8")
+
+    # Dump every hypothesis next to its reference, normalised and raw.
+    #
+    # A WER number tells you the fine-tune failed; it does not tell you HOW.
+    # Truncation, hallucinated continuations, and a systematic formatting shift
+    # all look identical in the aggregate. The first run cost a full re-read of
+    # the training manifest to work out that the model had learned to emit ALL
+    # CAPS -- which one glance at ten hypotheses would have shown immediately.
+    predictions = args.out.parent / "predictions.jsonl"
+    with predictions.open("w", encoding="utf-8") as handle:
+        for index, record in enumerate(records):
+            row = {
+                "id": record["id"],
+                "snr_db": record.get("snr_db"),
+                "noise_category": record.get("noise_category"),
+                "reference_raw": references[index],
+                "reference_norm": normalizer(references[index]),
+                "zeroshot_raw": hyps_base[index],
+                "zeroshot_norm": normalizer(hyps_base[index]),
+            }
+            if args.adapter is not None:
+                row["finetuned_raw"] = hyps_tuned[index]
+                row["finetuned_norm"] = normalizer(hyps_tuned[index])
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    print(f"per-utterance predictions -> {predictions}")
 
     print("\n" + "=" * 58)
     for key in ("wer_clean_zeroshot", "wer_degraded_zeroshot", "wer_degraded_finetuned"):

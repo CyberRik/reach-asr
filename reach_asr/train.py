@@ -47,9 +47,38 @@ class ManifestDataset(Dataset):
     operation that is not the bottleneck next to the backward pass.
     """
 
-    def __init__(self, manifest: Path, processor: Any, max_items: int | None = None) -> None:
+    def __init__(
+        self,
+        manifest: Path,
+        processor: Any,
+        max_items: int | None = None,
+        normalize_targets: bool = True,
+    ) -> None:
         self.root = manifest.parent
         self.processor = processor
+        # Train on the SAME text form that WER is scored on.
+        #
+        # LibriSpeech references are ALL CAPS with no punctuation; Whisper emits
+        # cased, punctuated text. Training on the raw references therefore
+        # teaches a formatting change rather than acoustics -- and an expensive
+        # one, because BPE splits uppercase into many more tokens than the same
+        # words in normal case, so the target sequences look nothing like
+        # anything the model saw in pretraining. The eval normalizer then strips
+        # case and punctuation, so the model gets no credit for what it learned
+        # and pays in full for the damage to recognition.
+        #
+        # Measured, first run, whisper-small, targets left raw:
+        #   clean zero-shot 3.06%  ->  degraded zero-shot 5.52%
+        #   degraded FINE-TUNED 11.89%   (WER more than doubled, every SNR bucket)
+        # Training loss fell 1.82 -> 0.71 the whole time: it was learning to
+        # shout, not to hear.
+        self.normalizer = None
+        if normalize_targets:
+            from transformers.models.whisper.english_normalizer import EnglishTextNormalizer
+
+            self.normalizer = EnglishTextNormalizer(
+                processor.tokenizer.english_spelling_normalizer
+            )
         self.items: list[Utterance] = []
         with manifest.open(encoding="utf-8") as handle:
             for line in handle:
@@ -69,7 +98,8 @@ class ManifestDataset(Dataset):
         features = self.processor.feature_extractor(
             wave.squeeze(0).numpy(), sampling_rate=sr, return_tensors="pt"
         )
-        labels = self.processor.tokenizer(text=item.text).input_ids
+        text = self.normalizer(item.text) if self.normalizer is not None else item.text
+        labels = self.processor.tokenizer(text=text).input_ids
         return {
             "input_features": features.input_features[0],
             "labels": labels,
@@ -104,7 +134,13 @@ def main() -> None:
     parser.add_argument("--epochs", type=float, default=2.0)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--grad-accum", type=int, default=8)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    # 1e-3 is the figure quoted in most Whisper-LoRA write-ups, but those run on
+    # far more data than 2000 utterances. At 126 steps it moves the decoder hard
+    # enough to lose more in recognition than the adaptation wins back, which is
+    # what the first run showed. 1e-4 is the conservative starting point now;
+    # raise it once a run with normalised targets has established a real
+    # baseline to compare against.
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--lora-r", type=int, default=32)
     parser.add_argument("--lora-alpha", type=int, default=64)
     parser.add_argument("--max-train", type=int, default=None)
@@ -160,7 +196,18 @@ def main() -> None:
         gradient_checkpointing=True,
         fp16=use_cuda,
         logging_steps=25,
-        save_strategy="epoch",
+        # No mid-run checkpoints. We save the adapter ourselves at the end, and
+        # a Trainer checkpoint writes optimiser + scheduler + RNG state (and,
+        # on a PEFT model, sometimes more of the base model than it needs) to
+        # /kaggle/working, which is network-backed and slow -- observed adding
+        # several minutes at the epoch boundary of a 20-minute run, which looks
+        # exactly like a hang at 124/126.
+        #
+        # The tradeoff is real but small at this scale: a crash loses the run
+        # rather than resuming from the last epoch. At ~20 min that is cheaper
+        # than paying the write on every epoch. Set this back to "epoch" for
+        # anything long enough that losing it would hurt.
+        save_strategy="no",
         report_to=[],
         remove_unused_columns=False,  # our dataset yields tensors the Trainer cannot introspect
         label_names=["labels"],
