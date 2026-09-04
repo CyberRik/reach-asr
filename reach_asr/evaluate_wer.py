@@ -365,15 +365,31 @@ def main() -> None:
     # up; the clean pair gets its own prefix.
     predictions = args.out.parent / "predictions.jsonl"
     legacy = {"degraded_zeroshot": "zeroshot", "degraded_finetuned": "finetuned"}
+
+    # A partial run must merge here too, for the same reason wer.json does.
+    # `hyps` holds only the passes THIS invocation ran, so rebuilding each row
+    # from scratch would drop every column an earlier run produced -- and
+    # analyze.py reads `zeroshot_norm`/`finetuned_norm`, which a
+    # `--passes clean_finetuned` run would have silently deleted. Columns are
+    # keyed by utterance id rather than by position, so a reordered or
+    # --limit-ed manifest cannot smear one utterance's hypothesis onto another.
+    previous: dict[str, dict[str, Any]] = {}
+    if selected is not None and predictions.exists():
+        for line in predictions.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                stored = json.loads(line)
+                previous[stored["id"]] = stored
+
     with predictions.open("w", encoding="utf-8") as handle:
         for index, record in enumerate(records):
-            row = {
+            row = dict(previous.get(record["id"], {}))
+            row.update({
                 "id": record["id"],
                 "snr_db": record.get("snr_db"),
                 "noise_category": record.get("noise_category"),
                 "reference_raw": references[index],
                 "reference_norm": normalizer(references[index]),
-            }
+            })
             for name, values in hyps.items():
                 prefix = legacy.get(name, name)
                 row[f"{prefix}_raw"] = values[index]
