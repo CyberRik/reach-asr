@@ -30,6 +30,11 @@ whose entire deployment surface is telephone audio the trade is worth making
 — but that is a deployment argument, not a measurement one, and it is stated
 here as such.
 
+> **[docs/evaluation-audit.md](docs/evaluation-audit.md)** — an audit of this
+> evaluation's own methodology: a labelling defect found in the SNR breakdown,
+> what it does and does not invalidate, the fix, and the limits that remain.
+> Read that before quoting any number here.
+
 ---
 
 ## The honest framing
@@ -387,6 +392,7 @@ reach_asr/build_dataset.py   streams LibriSpeech + ESC-50, writes WAVs + manifes
 reach_asr/train.py           LoRA fine-tune, sized for a 4 GB card
 reach_asr/evaluate_wer.py    the 2x2, bootstrap CIs, SNR breakdown
 reach_asr/plot_results.py    the two README figures, as light/dark SVG
+docs/evaluation-audit.md     methodology audit, fix, and known limits
 reach_asr/stats.py           paired bootstrap and data-derived SNR buckets
 reach_asr/analyze.py         re-analyse a finished run from predictions.jsonl (CPU)
 reach_asr/audio_io.py        upload decoding: any container -> mono 16 kHz float32
