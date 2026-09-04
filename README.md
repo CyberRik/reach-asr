@@ -10,16 +10,22 @@ browser MediaRecorder ──▶ reach-app /api/transcribe ──▶ reach-asr /t
    (WebM/Opus or MP4/AAC)      (Next.js, Vercel)          (FastAPI + GPU)
 ```
 
-| | WER |
-|---|---|
-| clean audio, zero-shot — the ceiling | **4.37%** |
-| degraded audio, zero-shot — the baseline | **23.76%** |
-| degraded audio, fine-tuned | **21.20%** |
-| **relative WER reduction** | **10.77%** |
+| WER | zero-shot | fine-tuned |
+|---|---|---|
+| **clean audio** | **4.37%** — the ceiling | *not yet measured* |
+| **degraded audio** | **23.76%** — the baseline | **21.20%** — the result |
 
 `whisper-base`, 2000 training utterances, 300 eval utterances. Read that
 honestly: the fine-tune recovered **2.56 of the 19.39 points** the channel cost,
 about 13% of the gap. Real, and modest — see [Results](#results).
+
+**The empty cell is the open question.** A LoRA trained only on one narrow
+degraded channel can buy its gain by giving up wideband speech, and at low rank
+that is routine rather than exotic. Until clean/fine-tuned is measured, "it
+learned to handle phone audio" and "it learned to *only* handle phone audio" are
+indistinguishable from this table. The code runs it
+(`--passes clean_finetuned`); the number is not in yet, and nothing here should
+be read as if it were.
 
 ---
 
@@ -74,10 +80,28 @@ the model card rather than to a bespoke scoring function. Without it,
 LibriSpeech's uppercase unpunctuated references against Whisper's cased
 punctuated output score ~100% WER for reasons unrelated to recognition.
 
+### The fourth cell
+
+The eval is a 2x2 — audio condition against model — and only three cells were
+originally measured. The missing one, clean audio through the fine-tuned model,
+is the only one that can tell a model that *gained* robustness from one that
+merely *narrowed*: if clean WER stays near 4.37% the ability was kept, and if it
+rises sharply the degraded-audio gain was paid for out of it.
+
+`evaluate_wer` now runs all four and reports the clean pair as a **change**, not
+a reduction — a regression there is the expected failure, and naming it a
+"reduction" would invite exactly the misreading the check exists to prevent. A
+subset of `--passes` merges into an existing `wer.json`, so filling in the
+missing cell of a finished run costs one generation pass rather than four:
+
+```bash
+python -m reach_asr.evaluate_wer --model openai/whisper-base     --adapter runs/whisper-lora/adapter --passes clean_finetuned
+```
+
 ### The interval, and the axis
 
-Two things were wrong with how the table above was originally reported, both
-fixed in `reach_asr/stats.py`.
+Two more things were wrong with how the table above was originally reported,
+both fixed in `reach_asr/stats.py`.
 
 **A delta without an interval is not a result.** 23.76% → 21.20% is 2.56 points
 from 300 utterances, one seed, one training run. Quoted bare it invites exactly
@@ -244,7 +268,7 @@ something other than what you claim. The serving path has the same shape: a
 wrong sample rate returns a fluent transcript of the wrong thing.
 
 So the tests assert measurable signal properties, not that the code runs.
-**47 tests, all passing** (`pytest tests/ -q`):
+**49 tests, all passing** (`pytest tests/ -q`):
 
 - `mix_noise` lands within 0.5 dB of the requested SNR at 0/5/10/20 dB. Every
   result is labelled with an SNR, so a scale error here mislabels everything and
@@ -274,6 +298,9 @@ So the tests assert measurable signal properties, not that the code runs.
 - A delta driven by **one outlier utterance** produces an interval that includes
   zero. Without this, the CI would be decorative: it has to be able to say the
   result is not separable from noise, or it is not measuring anything.
+- A clean-audio **regression reports a negative reduction**, and `p_no_improvement`
+  goes to 1.0. This pins the sign convention on the specialisation check, where
+  reporting a regression as a gain is the whole failure being guarded against.
 - Every utterance lands in **exactly one** SNR bucket, the maximum is not dropped
   off the top edge, and a run at a single fixed SNR yields one bucket rather than
   dividing by zero.
@@ -284,7 +311,7 @@ So the tests assert measurable signal properties, not that the code runs.
 reach_asr/telephony.py       the degradation chain (pure signal processing, CPU)
 reach_asr/build_dataset.py   streams LibriSpeech + ESC-50, writes WAVs + manifest
 reach_asr/train.py           LoRA fine-tune, sized for a 4 GB card
-reach_asr/evaluate_wer.py    three-way WER, bootstrap CI, SNR breakdown
+reach_asr/evaluate_wer.py    the 2x2, bootstrap CIs, SNR breakdown
 reach_asr/stats.py           paired bootstrap and data-derived SNR buckets
 reach_asr/analyze.py         re-analyse a finished run from predictions.jsonl (CPU)
 reach_asr/audio_io.py        upload decoding: any container -> mono 16 kHz float32
@@ -295,7 +322,7 @@ kaggle/reach_asr_kaggle.ipynb the committed run behind the reported WER, with ou
 tests/test_telephony.py      15 signal-property tests
 tests/test_audio_io.py        9 decode-path tests
 tests/test_serve.py           6 HTTP contract tests (no model loaded)
-tests/test_stats.py          17 bootstrap and bucketing tests
+tests/test_stats.py          19 bootstrap, bucketing and sign-convention tests
 ```
 
 ## License

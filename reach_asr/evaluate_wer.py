@@ -132,6 +132,16 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--out", type=Path, default=Path("results/wer.json"))
     parser.add_argument("--skip-clean", action="store_true")
+    parser.add_argument(
+        "--passes",
+        default="all",
+        help=(
+            "comma-separated subset of clean_zeroshot, degraded_zeroshot, "
+            "degraded_finetuned, clean_finetuned. A subset merges into an existing "
+            "--out rather than overwriting it, so the missing cell of a finished run "
+            "can be filled in with one generation pass instead of four."
+        ),
+    )
     parser.add_argument("--snr-buckets", type=int, default=3)
     parser.add_argument("--resamples", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
@@ -185,68 +195,159 @@ def main() -> None:
         ),
     }
 
-    base = fresh_base()
+    # The design is a 2x2: audio condition against model.
+    #
+    #                 zero-shot                fine-tuned
+    #     clean       the ceiling              THE SPECIALISATION CHECK
+    #     degraded    the baseline             the result
+    #
+    # Only three of these were measured originally, and the missing one is the
+    # only cell that can distinguish two very different outcomes:
+    #
+    #   "it learned to handle phone audio"       clean/fine-tuned ~= clean/zero-shot
+    #   "it learned to ONLY handle phone audio"  clean/fine-tuned >> clean/zero-shot
+    #
+    # A LoRA trained exclusively on one narrow degraded channel can buy its
+    # degraded-audio gain by giving up the wideband case, and at low rank that is
+    # a routine outcome rather than an exotic one. Without the fourth cell the
+    # headline improvement is not wrong, but it is unaudited: nobody can tell
+    # whether the model got better or merely got narrower. It costs one more
+    # generation pass and no retraining, which is a poor reason to leave the
+    # question open.
+    PASS_SPECS = {
+        # name: (audio key, needs adapter, human label)
+        "clean_zeroshot": ("clean_audio", False, "zero-shot on CLEAN audio (the ceiling)"),
+        "degraded_zeroshot": ("audio", False, "zero-shot on DEGRADED audio (the baseline)"),
+        "degraded_finetuned": ("audio", True, "fine-tuned on DEGRADED audio (the result)"),
+        "clean_finetuned": (
+            "clean_audio",
+            True,
+            "fine-tuned on CLEAN audio (the specialisation check)",
+        ),
+    }
 
-    if not args.skip_clean and "clean_audio" in records[0]:
-        print("[1/3] zero-shot on CLEAN audio (the ceiling)...")
-        hyps = transcribe_all(base, processor, eval_root, records, "clean_audio", device)
-        results["wer_clean_zeroshot"] = score(references, hyps, normalizer)
-        print(f"      WER {results['wer_clean_zeroshot']:.4f}")
+    has_clean = "clean_audio" in records[0]
+    selected = [name.strip() for name in args.passes.split(",")] if args.passes != "all" else None
+    if selected:
+        unknown = set(selected) - set(PASS_SPECS)
+        if unknown:
+            raise SystemExit(f"unknown pass(es): {', '.join(sorted(unknown))}")
 
-    print("[2/3] zero-shot on DEGRADED audio (the baseline)...")
-    hyps_base = transcribe_all(base, processor, eval_root, records, "audio", device)
-    results["wer_degraded_zeroshot"] = score(references, hyps_base, normalizer)
-    results["wer_degraded_zeroshot_by_snr"] = wer_by_snr(
-        records, references, hyps_base, normalizer, n_buckets=args.snr_buckets
-    )
-    print(f"      WER {results['wer_degraded_zeroshot']:.4f}")
+    wanted: list[str] = []
+    for name, (audio_key, needs_adapter, _) in PASS_SPECS.items():
+        if selected is not None and name not in selected:
+            continue
+        if needs_adapter and args.adapter is None:
+            continue
+        if audio_key == "clean_audio" and (args.skip_clean or not has_clean):
+            continue
+        wanted.append(name)
 
-    if args.adapter is not None:
-        from peft import PeftModel
+    if not wanted:
+        raise SystemExit("no passes to run -- check --passes, --adapter and --skip-clean")
 
-        print("[3/3] fine-tuned on DEGRADED audio...")
-        tuned = PeftModel.from_pretrained(fresh_base(), str(args.adapter))
-        tuned = tuned.merge_and_unload().to(device).eval()
-        hyps_tuned = transcribe_all(tuned, processor, eval_root, records, "audio", device)
-        results["wer_degraded_finetuned"] = score(references, hyps_tuned, normalizer)
-        results["wer_degraded_finetuned_by_snr"] = wer_by_snr(
-            records, references, hyps_tuned, normalizer, n_buckets=args.snr_buckets
+    # Running a subset means the other cells live in a previous run's file.
+    # Overwriting it with only the new pass would silently destroy three numbers
+    # that cost half an hour of GPU to produce, so a partial run merges instead.
+    if selected is not None and args.out.exists():
+        results.update(json.loads(args.out.read_text(encoding="utf-8")))
+        print(f"merging into existing {args.out}")
+
+    models: dict[bool, Any] = {}
+
+    def model_for(needs_adapter: bool) -> Any:
+        if needs_adapter not in models:
+            if needs_adapter:
+                from peft import PeftModel
+
+                tuned = PeftModel.from_pretrained(fresh_base(), str(args.adapter))
+                models[True] = tuned.merge_and_unload().to(device).eval()
+            else:
+                models[False] = fresh_base()
+        return models[needs_adapter]
+
+    hyps: dict[str, list[str]] = {}
+    for step, name in enumerate(wanted, start=1):
+        audio_key, needs_adapter, label = PASS_SPECS[name]
+        print(f"[{step}/{len(wanted)}] {label}...")
+        hyps[name] = transcribe_all(
+            model_for(needs_adapter), processor, eval_root, records, audio_key, device
         )
-        base_wer = results["wer_degraded_zeroshot"]
-        tuned_wer = results["wer_degraded_finetuned"]
-        results["relative_wer_reduction"] = (base_wer - tuned_wer) / base_wer if base_wer else 0.0
-        print(f"      WER {tuned_wer:.4f}")
+        results[f"wer_{name}"] = score(references, hyps[name], normalizer)
+        print(f"      WER {results[f'wer_{name}']:.4f}")
 
-        # A delta without an interval is not a result. This costs a couple of
-        # seconds on CPU against the ~10 min of generation above, and it is the
-        # difference between "the fine-tune helped" and "the fine-tune helped by
-        # an amount this eval set can actually resolve".
-        #
-        # Paired on the same utterance indices, because both systems were scored
-        # on byte-identical audio -- see stats.paired_bootstrap.
-        from reach_asr.stats import count_pair, paired_bootstrap
-
-        pairs = [
-            (normalizer(ref), normalizer(hyp_base), normalizer(hyp_tuned))
-            for ref, hyp_base, hyp_tuned in zip(
-                references, hyps_base, hyps_tuned, strict=True
+    for name in ("degraded_zeroshot", "degraded_finetuned"):
+        if name in hyps:
+            results[f"wer_{name}_by_snr"] = wer_by_snr(
+                records, references, hyps[name], normalizer, n_buckets=args.snr_buckets
             )
+
+    base_wer = results.get("wer_degraded_zeroshot")
+    tuned_wer = results.get("wer_degraded_finetuned")
+    if base_wer is not None and tuned_wer is not None:
+        results["relative_wer_reduction"] = (base_wer - tuned_wer) / base_wer if base_wer else 0.0
+
+    # --- the two comparisons, each with its own interval -------------------
+    #
+    # Both are paired: every pass scores the same 300 utterances, and for the
+    # clean pair it is literally the same audio file through two models.
+    from reach_asr.stats import count_pair, paired_bootstrap
+
+    def bootstrap_between(baseline_name: str, system_name: str) -> Any:
+        if baseline_name not in hyps or system_name not in hyps:
+            return None
+        rows = [
+            (normalizer(ref), normalizer(a), normalizer(b))
+            for ref, a, b in zip(references, hyps[baseline_name], hyps[system_name], strict=True)
             if normalizer(ref).strip()
         ]
-        boot = paired_bootstrap(
-            [count_pair(ref, base) for ref, base, _ in pairs],
-            [count_pair(ref, tuned) for ref, _, tuned in pairs],
+        return paired_bootstrap(
+            [count_pair(ref, a) for ref, a, _ in rows],
+            [count_pair(ref, b) for ref, _, b in rows],
             n_resamples=args.resamples,
             seed=args.seed,
         )
+
+    boot = bootstrap_between("degraded_zeroshot", "degraded_finetuned")
+    if boot is not None:
         results["bootstrap"] = boot.as_dict()
         print(
-            f"      95% CI on the absolute reduction: "
+            f"\n95% CI on the degraded-audio reduction: "
             f"[{boot.absolute_reduction.low * 100:.2f},"
             f" {boot.absolute_reduction.high * 100:.2f}] pp"
         )
         if boot.absolute_reduction.low <= 0.0:
-            print("      NOTE: the interval includes zero -- report it that way.")
+            print("  NOTE: the interval includes zero -- report it that way.")
+
+    # Sign convention: this is deliberately NOT a "reduction". A positive
+    # absolute_reduction here would mean the fine-tune improved clean audio too;
+    # the expected and worrying case is negative, i.e. clean WER got worse. The
+    # key is named for what it measures so nobody reads a regression as a gain.
+    spec = bootstrap_between("clean_zeroshot", "clean_finetuned")
+    if spec is not None:
+        clean_zero = results["wer_clean_zeroshot"]
+        clean_tuned = results["wer_clean_finetuned"]
+        cost = clean_tuned - clean_zero
+        results["specialisation"] = {
+            "clean_wer_change_pp": cost,
+            "bootstrap": spec.as_dict(),
+        }
+        print(
+            f"\nspecialisation check -- clean WER {clean_zero * 100:.2f}% -> "
+            f"{clean_tuned * 100:.2f}% ({cost * 100:+.2f} pp)"
+        )
+        print(
+            f"  95% CI on the change: "
+            f"[{-spec.absolute_reduction.high * 100:+.2f},"
+            f" {-spec.absolute_reduction.low * 100:+.2f}] pp"
+        )
+        if spec.absolute_reduction.low <= 0.0 <= spec.absolute_reduction.high:
+            print("  Clean-audio ability is intact within the interval.")
+        elif cost > 0:
+            print(
+                "  Clean audio got WORSE. The fine-tune bought its degraded-audio\n"
+                "  gain by specialising; report both numbers together."
+            )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(results, indent=2), encoding="utf-8")
@@ -258,7 +359,12 @@ def main() -> None:
     # all look identical in the aggregate. The first run cost a full re-read of
     # the training manifest to work out that the model had learned to emit ALL
     # CAPS -- which one glance at ten hypotheses would have shown immediately.
+    #
+    # Field names keep the legacy `zeroshot_*` / `finetuned_*` spelling for the
+    # degraded pair so that analyze.py and any previously saved file still line
+    # up; the clean pair gets its own prefix.
     predictions = args.out.parent / "predictions.jsonl"
+    legacy = {"degraded_zeroshot": "zeroshot", "degraded_finetuned": "finetuned"}
     with predictions.open("w", encoding="utf-8") as handle:
         for index, record in enumerate(records):
             row = {
@@ -267,21 +373,28 @@ def main() -> None:
                 "noise_category": record.get("noise_category"),
                 "reference_raw": references[index],
                 "reference_norm": normalizer(references[index]),
-                "zeroshot_raw": hyps_base[index],
-                "zeroshot_norm": normalizer(hyps_base[index]),
             }
-            if args.adapter is not None:
-                row["finetuned_raw"] = hyps_tuned[index]
-                row["finetuned_norm"] = normalizer(hyps_tuned[index])
+            for name, values in hyps.items():
+                prefix = legacy.get(name, name)
+                row[f"{prefix}_raw"] = values[index]
+                row[f"{prefix}_norm"] = normalizer(values[index])
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     print(f"per-utterance predictions -> {predictions}")
 
     print("\n" + "=" * 58)
-    for key in ("wer_clean_zeroshot", "wer_degraded_zeroshot", "wer_degraded_finetuned"):
+    for key in (
+        "wer_clean_zeroshot",
+        "wer_clean_finetuned",
+        "wer_degraded_zeroshot",
+        "wer_degraded_finetuned",
+    ):
         if key in results:
             print(f"{key:32s} {results[key] * 100:6.2f}%")
     if "relative_wer_reduction" in results:
         print(f"{'relative WER reduction':32s} {results['relative_wer_reduction'] * 100:6.2f}%")
+    if "specialisation" in results:
+        change = results["specialisation"]["clean_wer_change_pp"] * 100
+        print(f"{'clean-audio change (pp)':32s} {change:+6.2f}")
     print("=" * 58)
     print(f"written -> {args.out}")
 

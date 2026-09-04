@@ -40,6 +40,10 @@ from reach_asr.stats import (
 REFERENCE_FIELD = "reference_norm"
 ZEROSHOT_FIELD = "zeroshot_norm"
 FINETUNED_FIELD = "finetuned_norm"
+# The clean pair, present once the specialisation check has been run. Older
+# prediction files predate it and simply lack these columns.
+CLEAN_ZEROSHOT_FIELD = "clean_zeroshot_norm"
+CLEAN_FINETUNED_FIELD = "clean_finetuned_norm"
 
 
 def load_predictions(path: Path) -> list[dict[str, Any]]:
@@ -85,6 +89,7 @@ def main() -> None:
     dropped = len(rows) - len(scored)
 
     has_finetuned = FINETUNED_FIELD in rows[0]
+    pct = int(args.confidence * 100)
 
     zeroshot = score_rows(rows, ZEROSHOT_FIELD)
     summary: dict[str, Any] = {
@@ -112,7 +117,6 @@ def main() -> None:
         summary["wer_degraded_finetuned"] = corpus_wer(finetuned)
         summary["bootstrap"] = boot.as_dict()
 
-        pct = int(args.confidence * 100)
         print(f"degraded / fine-tuned  {corpus_wer(finetuned) * 100:6.2f}%")
         print(f"\npaired bootstrap, {boot.n_resamples:,} resamples, {pct}% percentile interval")
         print(
@@ -131,6 +135,52 @@ def main() -> None:
                 "\n  The interval includes zero. On this eval set the improvement is not\n"
                 "  separable from sampling noise -- report it that way."
             )
+
+    # --- specialisation check ---------------------------------------------
+    # Did the fine-tune keep its wideband ability, or trade it for the narrow
+    # channel? Reported as a change, not a reduction: the number that matters is
+    # expected to be positive-is-bad, and calling it a "reduction" would invite
+    # exactly the misreading it exists to prevent.
+    if CLEAN_ZEROSHOT_FIELD in rows[0] and CLEAN_FINETUNED_FIELD in rows[0]:
+        clean_zero = score_rows(rows, CLEAN_ZEROSHOT_FIELD)
+        clean_tuned = score_rows(rows, CLEAN_FINETUNED_FIELD)
+        zero_wer = corpus_wer(clean_zero)
+        tuned_wer = corpus_wer(clean_tuned)
+        spec = paired_bootstrap(
+            clean_zero,
+            clean_tuned,
+            n_resamples=args.resamples,
+            confidence=args.confidence,
+            seed=args.seed,
+        )
+        change = tuned_wer - zero_wer
+        summary["wer_clean_zeroshot"] = zero_wer
+        summary["wer_clean_finetuned"] = tuned_wer
+        summary["specialisation"] = {
+            "clean_wer_change_pp": change,
+            "bootstrap": spec.as_dict(),
+        }
+        print(
+            f"\nspecialisation check -- clean WER {zero_wer * 100:.2f}% -> "
+            f"{tuned_wer * 100:.2f}% ({change * 100:+.2f} pp)"
+        )
+        print(
+            f"  {pct}% CI on the change: "
+            f"[{-spec.absolute_reduction.high * 100:+.2f},"
+            f" {-spec.absolute_reduction.low * 100:+.2f}] pp"
+        )
+        if spec.absolute_reduction.low <= 0.0 <= spec.absolute_reduction.high:
+            print("  Clean-audio ability is intact within the interval.")
+        elif change > 0:
+            print(
+                "  Clean audio got WORSE -- the gain was bought by specialising.\n"
+                "  Report both numbers together."
+            )
+    elif has_finetuned:
+        print(
+            "\nno clean/fine-tuned column -- the specialisation check has not been run.\n"
+            "  reach_asr.evaluate_wer --passes clean_finetuned fills it in with one pass."
+        )
 
     # --- per-condition breakdown ------------------------------------------
     snrs = [row.get("snr_db") for row in scored]

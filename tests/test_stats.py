@@ -188,3 +188,33 @@ def test_empty_bands_are_dropped_rather_than_reported_as_zero_percent() -> None:
     buckets = derive_buckets(snrs, n_buckets=4)
     assert all(bucket.indices for bucket in buckets)
     assert len(buckets) < 4
+
+
+# --- the specialisation check ----------------------------------------------
+#
+# The fourth cell of the 2x2 reuses paired_bootstrap with the arguments the other
+# way round: baseline = clean/zero-shot, system = clean/fine-tuned. These pin the
+# sign convention, because a regression reported as a gain is exactly the failure
+# the check exists to catch.
+
+
+def test_a_clean_audio_regression_reports_a_negative_reduction() -> None:
+    """Fine-tuned clean WER worse than zero-shot must come out negative."""
+    clean_zeroshot = _counts([(1, 20)] * 40)
+    clean_finetuned = _counts([(4, 20)] * 40)
+    result = paired_bootstrap(clean_zeroshot, clean_finetuned, n_resamples=500, seed=11)
+
+    assert result.absolute_reduction.point < 0.0
+    assert result.absolute_reduction.high < 0.0
+    assert result.p_no_improvement == 1.0
+
+
+def test_intact_clean_ability_gives_an_interval_spanning_zero() -> None:
+    """The outcome worth being able to claim: nothing was given up."""
+    rng = __import__("random").Random(12)
+    pairs = [(rng.choice([1, 2]), 20) for _ in range(60)]
+    clean_zeroshot = _counts(pairs)
+    clean_finetuned = _counts(list(reversed(pairs)))
+    result = paired_bootstrap(clean_zeroshot, clean_finetuned, n_resamples=1000, seed=12)
+
+    assert result.absolute_reduction.low <= 0.0 <= result.absolute_reduction.high
