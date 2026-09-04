@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="360" viewBox="0 0 780 360" role="img" aria-label="Word error rate by SNR band, zero-shot versus fine-tuned">
+<rect width="780" height="360" fill="#1a1a19"/>
+<text x="16.0" y="26.0" fill="#ffffff" font-size="15" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="start">WER by SNR band</text>
+<text x="16.0" y="44.0" fill="#c3c2b7" font-size="11" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="start">lower is better · 300 eval utterances · whisper-base</text>
+<rect x="554" y="18" width="9" height="9" rx="2" fill="#3987e5"/>
+<text x="568.0" y="27.0" fill="#c3c2b7" font-size="11" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="start">zero-shot</text>
+<rect x="662" y="18" width="9" height="9" rx="2" fill="#d95926"/>
+<text x="676.0" y="27.0" fill="#c3c2b7" font-size="11" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="start">fine-tuned</text>
+<line x1="52" y1="298.0" x2="764" y2="298.0" stroke="#383734" stroke-width="1"/>
+<text x="44.0" y="302.0" fill="#c3c2b7" font-size="11" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="end">0%</text>
+<line x1="52" y1="239.5" x2="764" y2="239.5" stroke="#383734" stroke-width="1"/>
+<text x="44.0" y="243.5" fill="#c3c2b7" font-size="11" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="end">10%</text>
+<line x1="52" y1="181.0" x2="764" y2="181.0" stroke="#383734" stroke-width="1"/>
+<text x="44.0" y="185.0" fill="#c3c2b7" font-size="11" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="end">20%</text>
+<line x1="52" y1="122.5" x2="764" y2="122.5" stroke="#383734" stroke-width="1"/>
+<text x="44.0" y="126.5" fill="#c3c2b7" font-size="11" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="end">30%</text>
+<line x1="52" y1="64.0" x2="764" y2="64.0" stroke="#383734" stroke-width="1"/>
+<text x="44.0" y="68.0" fill="#c3c2b7" font-size="11" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="end">40%</text>
+<path d="M110.0,298.0 L110.0,78.6 Q110.0,74.6 114.0,74.6 L136.0,74.6 Q140.0,74.6 140.0,78.6 L140.0,298.0 Z" fill="#3987e5"/>
+<text x="125.0" y="68.6" fill="#ffffff" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">38.2</text>
+<path d="M142.0,298.0 L142.0,111.7 Q142.0,107.7 146.0,107.7 L168.0,107.7 Q172.0,107.7 172.0,111.7 L172.0,298.0 Z" fill="#d95926"/>
+<text x="157.0" y="101.7" fill="#ffffff" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">32.5</text>
+<text x="141.0" y="316.0" fill="#ffffff" font-size="11.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="middle">-5 to 0 dB</text>
+<text x="141.0" y="331.0" fill="#c3c2b7" font-size="10" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="middle">n=99</text>
+<text x="141.0" y="347.0" fill="#c3c2b7" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">−5.67 pp</text>
+<path d="M288.0,298.0 L288.0,179.6 Q288.0,175.6 292.0,175.6 L314.0,175.6 Q318.0,175.6 318.0,179.6 L318.0,298.0 Z" fill="#3987e5"/>
+<text x="303.0" y="169.6" fill="#ffffff" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">20.9</text>
+<path d="M320.0,298.0 L320.0,190.2 Q320.0,186.2 324.0,186.2 L346.0,186.2 Q350.0,186.2 350.0,190.2 L350.0,298.0 Z" fill="#d95926"/>
+<text x="335.0" y="180.2" fill="#ffffff" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">19.1</text>
+<text x="319.0" y="316.0" fill="#ffffff" font-size="11.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="middle">0 to 5 dB</text>
+<text x="319.0" y="331.0" fill="#c3c2b7" font-size="10" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="middle">n=104</text>
+<text x="319.0" y="347.0" fill="#c3c2b7" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">−1.82 pp</text>
+<path d="M466.0,298.0 L466.0,225.0 Q466.0,221.0 470.0,221.0 L492.0,221.0 Q496.0,221.0 496.0,225.0 L496.0,298.0 Z" fill="#3987e5"/>
+<text x="481.0" y="215.0" fill="#ffffff" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">13.2</text>
+<path d="M498.0,298.0 L498.0,227.4 Q498.0,223.4 502.0,223.4 L524.0,223.4 Q528.0,223.4 528.0,227.4 L528.0,298.0 Z" fill="#d95926"/>
+<text x="513.0" y="217.4" fill="#ffffff" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">12.8</text>
+<text x="497.0" y="316.0" fill="#ffffff" font-size="11.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="middle">5 to 10 dB</text>
+<text x="497.0" y="331.0" fill="#c3c2b7" font-size="10" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="middle">n=97</text>
+<text x="497.0" y="347.0" fill="#c3c2b7" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">−0.41 pp</text>
+<path d="M644.0,298.0 L644.0,276.4 Q644.0,272.4 648.0,272.4 L670.0,272.4 Q674.0,272.4 674.0,276.4 L674.0,298.0 Z" fill="#3987e5"/>
+<text x="659.0" y="266.4" fill="#ffffff" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">4.4</text>
+<path d="M676.0,298.0 L676.0,271.3 Q676.0,267.3 680.0,267.3 L702.0,267.3 Q706.0,267.3 706.0,271.3 L706.0,298.0 Z" fill="#d95926"/>
+<text x="691.0" y="261.3" fill="#ffffff" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">5.2</text>
+<text x="675.0" y="316.0" fill="#ffffff" font-size="11.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="middle">clean</text>
+<text x="675.0" y="331.0" fill="#c3c2b7" font-size="10" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="middle">n=300</text>
+<text x="675.0" y="347.0" fill="#c3c2b7" font-size="10.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="600" text-anchor="middle">+0.87 pp</text>
+<line x1="52" y1="298" x2="764" y2="298" stroke="#c3c2b7" stroke-width="1"/>
+</svg>

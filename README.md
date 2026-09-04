@@ -117,16 +117,21 @@ alone produces the number without an interval, which is most of the point.
 
 ### One curve, not two effects
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/wer-by-snr-dark.svg">
+  <img alt="WER by SNR band: zero-shot versus fine-tuned bars for -5 to 0, 0 to 5 and 5 to 10 dB and for clean audio. The gain shrinks as SNR rises and reverses sign on clean." src="docs/wer-by-snr.svg">
+</picture>
+
 The SNR breakdown is monotone, and it stays monotone in *relative* terms —
 which is the stronger statement, since it is not merely an artifact of harder
 buckets having more room to improve:
 
 | band | n | zero-shot | fine-tuned | delta | relative |
 |---|---|---|---|---|---|
-| —5 to 0 dB | 99 | 38.19% | 32.53% | 5.67 pp | **14.8%** |
+| -5 to 0 dB | 99 | 38.19% | 32.53% | 5.67 pp | **14.8%** |
 | 0 to 5 dB | 104 | 20.93% | 19.11% | 1.82 pp | **8.7%** |
 | 5 to 10 dB | 97 | 13.16% | 12.75% | 0.41 pp | **3.1%** |
-| clean | 300 | 4.37% | 5.24% | —0.87 pp | **—19.9%** |
+| clean | 300 | 4.37% | 5.24% | -0.87 pp | **-19.9%** |
 
 Read the clean regression as the fourth row and the result is one curve rather
 than two unrelated effects: the adapter reallocates capacity along the SNR axis,
@@ -177,6 +182,15 @@ breakdown was hardcoded at 5–10/10–15/15–20 dB. The reported run used −5
 diagnostic silently returned the corpus mean under a label claiming otherwise —
 worse than reporting nothing, because the output looks fine. Edges now come from
 the run's own SNR values (`--snr-buckets`, default 3).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/effect-intervals-dark.svg">
+  <img alt="Absolute WER change with 95% intervals: degraded audio -2.56 pp [-3.85, -1.31], clean audio +0.87 pp [+0.35, +1.40]. Neither interval crosses zero." src="docs/effect-intervals.svg">
+</picture>
+
+Neither interval crosses zero, which is the only reason both numbers are quoted
+as results rather than as directions.
+
 
 ### Re-analysing a finished run without a GPU
 
@@ -372,6 +386,7 @@ reach_asr/telephony.py       the degradation chain (pure signal processing, CPU)
 reach_asr/build_dataset.py   streams LibriSpeech + ESC-50, writes WAVs + manifest
 reach_asr/train.py           LoRA fine-tune, sized for a 4 GB card
 reach_asr/evaluate_wer.py    the 2x2, bootstrap CIs, SNR breakdown
+reach_asr/plot_results.py    the two README figures, as light/dark SVG
 reach_asr/stats.py           paired bootstrap and data-derived SNR buckets
 reach_asr/analyze.py         re-analyse a finished run from predictions.jsonl (CPU)
 reach_asr/audio_io.py        upload decoding: any container -> mono 16 kHz float32
