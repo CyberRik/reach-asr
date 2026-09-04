@@ -91,30 +91,36 @@ def score(references: list[str], hypotheses: list[str], normalizer: Any) -> floa
 
 
 def wer_by_snr(
-    records: list[dict], references: list[str], hypotheses: list[str], normalizer: Any
+    records: list[dict],
+    references: list[str],
+    hypotheses: list[str],
+    normalizer: Any,
+    n_buckets: int = 3,
 ) -> dict[str, float]:
     """WER bucketed by the SNR each utterance was actually mixed at.
 
     A single mean WER hides whether the fine-tune helped uniformly or only
     rescued the loudest cases -- and on emergency audio the low-SNR bucket is
     the one that matters, since a caller in a quiet room was never the problem.
-    """
-    buckets: dict[str, list[int]] = {"5-10 dB": [], "10-15 dB": [], "15-20 dB": []}
-    for index, record in enumerate(records):
-        snr = record.get("snr_db", float("inf"))
-        if snr < 10:
-            buckets["5-10 dB"].append(index)
-        elif snr < 15:
-            buckets["10-15 dB"].append(index)
-        else:
-            buckets["15-20 dB"].append(index)
 
+    The edges come from the run's own SNR values (`stats.derive_buckets`). They
+    used to be hardcoded at 5-10/10-15/15-20 dB, which silently broke the moment
+    the channel was hardened: the reported run used -5 to 10 dB, so every
+    utterance fell in the bottom bucket and this function returned the corpus
+    mean under a label claiming it was a per-condition breakdown. A diagnostic
+    that degrades into the number it is supposed to decompose is worse than one
+    that is absent, because nothing about the output says it has stopped working.
+    """
+    from reach_asr.stats import derive_buckets
+
+    snrs = [record.get("snr_db", float("inf")) for record in records]
     out: dict[str, float] = {}
-    for name, indices in buckets.items():
-        if indices:
-            out[name] = score(
-                [references[i] for i in indices], [hypotheses[i] for i in indices], normalizer
-            )
+    for bucket in derive_buckets(snrs, n_buckets=n_buckets):
+        out[bucket.label] = score(
+            [references[i] for i in bucket.indices],
+            [hypotheses[i] for i in bucket.indices],
+            normalizer,
+        )
     return out
 
 
@@ -126,6 +132,9 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--out", type=Path, default=Path("results/wer.json"))
     parser.add_argument("--skip-clean", action="store_true")
+    parser.add_argument("--snr-buckets", type=int, default=3)
+    parser.add_argument("--resamples", type=int, default=10_000)
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
     require_jiwer()
@@ -187,7 +196,9 @@ def main() -> None:
     print("[2/3] zero-shot on DEGRADED audio (the baseline)...")
     hyps_base = transcribe_all(base, processor, eval_root, records, "audio", device)
     results["wer_degraded_zeroshot"] = score(references, hyps_base, normalizer)
-    results["wer_degraded_zeroshot_by_snr"] = wer_by_snr(records, references, hyps_base, normalizer)
+    results["wer_degraded_zeroshot_by_snr"] = wer_by_snr(
+        records, references, hyps_base, normalizer, n_buckets=args.snr_buckets
+    )
     print(f"      WER {results['wer_degraded_zeroshot']:.4f}")
 
     if args.adapter is not None:
@@ -199,12 +210,43 @@ def main() -> None:
         hyps_tuned = transcribe_all(tuned, processor, eval_root, records, "audio", device)
         results["wer_degraded_finetuned"] = score(references, hyps_tuned, normalizer)
         results["wer_degraded_finetuned_by_snr"] = wer_by_snr(
-            records, references, hyps_tuned, normalizer
+            records, references, hyps_tuned, normalizer, n_buckets=args.snr_buckets
         )
         base_wer = results["wer_degraded_zeroshot"]
         tuned_wer = results["wer_degraded_finetuned"]
         results["relative_wer_reduction"] = (base_wer - tuned_wer) / base_wer if base_wer else 0.0
         print(f"      WER {tuned_wer:.4f}")
+
+        # A delta without an interval is not a result. This costs a couple of
+        # seconds on CPU against the ~10 min of generation above, and it is the
+        # difference between "the fine-tune helped" and "the fine-tune helped by
+        # an amount this eval set can actually resolve".
+        #
+        # Paired on the same utterance indices, because both systems were scored
+        # on byte-identical audio -- see stats.paired_bootstrap.
+        from reach_asr.stats import count_pair, paired_bootstrap
+
+        pairs = [
+            (normalizer(ref), normalizer(hyp_base), normalizer(hyp_tuned))
+            for ref, hyp_base, hyp_tuned in zip(
+                references, hyps_base, hyps_tuned, strict=True
+            )
+            if normalizer(ref).strip()
+        ]
+        boot = paired_bootstrap(
+            [count_pair(ref, base) for ref, base, _ in pairs],
+            [count_pair(ref, tuned) for ref, _, tuned in pairs],
+            n_resamples=args.resamples,
+            seed=args.seed,
+        )
+        results["bootstrap"] = boot.as_dict()
+        print(
+            f"      95% CI on the absolute reduction: "
+            f"[{boot.absolute_reduction.low * 100:.2f},"
+            f" {boot.absolute_reduction.high * 100:.2f}] pp"
+        )
+        if boot.absolute_reduction.low <= 0.0:
+            print("      NOTE: the interval includes zero -- report it that way.")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(results, indent=2), encoding="utf-8")

@@ -74,11 +74,46 @@ the model card rather than to a bespoke scoring function. Without it,
 LibriSpeech's uppercase unpunctuated references against Whisper's cased
 punctuated output score ~100% WER for reasons unrelated to recognition.
 
-Results also break down by SNR bucket. A single mean hides whether the fine-tune
-helped uniformly or only rescued the loudest cases — and the low-SNR bucket is
-the one that matters, since a caller in a quiet room was never the problem.
-(The buckets are currently fixed at 5–10/10–15/15–20 dB, so a run at −5 to 10 dB
-collapses into the bottom one; the headline numbers are unaffected.)
+### The interval, and the axis
+
+Two things were wrong with how the table above was originally reported, both
+fixed in `reach_asr/stats.py`.
+
+**A delta without an interval is not a result.** 23.76% → 21.20% is 2.56 points
+from 300 utterances, one seed, one training run. Quoted bare it invites exactly
+the question it cannot answer. `evaluate_wer` now reports a **paired percentile
+bootstrap** over utterances alongside the point estimate — paired because both
+systems are scored on byte-identical audio, which `telephony.degrade` guarantees
+by seed, so resampling them independently would widen the interval with variance
+the experiment design already removed.
+
+**Buckets that don't match the run report the mean three times.** The SNR
+breakdown was hardcoded at 5–10/10–15/15–20 dB. The reported run used −5 to
+10 dB, so all 300 utterances landed in the bottom bucket and the per-condition
+diagnostic silently returned the corpus mean under a label claiming otherwise —
+worse than reporting nothing, because the output looks fine. Edges now come from
+the run's own SNR values (`--snr-buckets`, default 3).
+
+### Re-analysing a finished run without a GPU
+
+`predictions.jsonl` already carries every reference and hypothesis, normalised,
+with per-utterance SNR and noise category. So the interval and both breakdowns
+are pure post-processing on data the run already produced — no model load, no
+generation pass, seconds on a laptop:
+
+```bash
+python -m reach_asr.analyze --predictions results/predictions.jsonl
+```
+
+It prints the corpus WERs, the bootstrap interval on the absolute and relative
+reduction, the fraction of resamples in which the fine-tune did not win, and
+breakdowns by SNR band **and by noise category** — the second axis the manifest
+was already recording and nothing was reading. A fine-tune that helps on rain and
+not on sirens is a different result from one that helps uniformly, and neither
+the mean nor the SNR split would show it.
+
+If the interval includes zero, it says so rather than leaving the reader to
+notice.
 
 ### The run before this one failed, and why
 
@@ -209,7 +244,7 @@ something other than what you claim. The serving path has the same shape: a
 wrong sample rate returns a fluent transcript of the wrong thing.
 
 So the tests assert measurable signal properties, not that the code runs.
-**30 tests, all passing** (`pytest tests/ -q`):
+**47 tests, all passing** (`pytest tests/ -q`):
 
 - `mix_noise` lands within 0.5 dB of the requested SNR at 0/5/10/20 dB. Every
   result is labelled with an SNR, so a scale error here mislabels everything and
@@ -232,6 +267,16 @@ So the tests assert measurable signal properties, not that the code runs.
 - 422 (bad audio) and 503 (service broken) stay distinct across the HTTP
   boundary. REACH retries one and asks the user to re-record on the other, so
   swapping them makes an outage look like the responder's mistake.
+- A **uniform improvement never reverses under resampling**. This is the test
+  that fails if the bootstrap's pairing is ever dropped -- independent resampling
+  would draw good baseline utterances against bad fine-tuned ones and report a
+  regression that the data does not contain.
+- A delta driven by **one outlier utterance** produces an interval that includes
+  zero. Without this, the CI would be decorative: it has to be able to say the
+  result is not separable from noise, or it is not measuring anything.
+- Every utterance lands in **exactly one** SNR bucket, the maximum is not dropped
+  off the top edge, and a run at a single fixed SNR yields one bucket rather than
+  dividing by zero.
 
 ## Layout
 
@@ -239,7 +284,9 @@ So the tests assert measurable signal properties, not that the code runs.
 reach_asr/telephony.py       the degradation chain (pure signal processing, CPU)
 reach_asr/build_dataset.py   streams LibriSpeech + ESC-50, writes WAVs + manifest
 reach_asr/train.py           LoRA fine-tune, sized for a 4 GB card
-reach_asr/evaluate_wer.py    three-way WER with an SNR breakdown
+reach_asr/evaluate_wer.py    three-way WER, bootstrap CI, SNR breakdown
+reach_asr/stats.py           paired bootstrap and data-derived SNR buckets
+reach_asr/analyze.py         re-analyse a finished run from predictions.jsonl (CPU)
 reach_asr/audio_io.py        upload decoding: any container -> mono 16 kHz float32
 reach_asr/transcribe.py      inference core; merges the adapter, caches the load
 reach_asr/serve.py           FastAPI service the REACH app calls
@@ -248,6 +295,7 @@ kaggle/reach_asr_kaggle.ipynb the committed run behind the reported WER, with ou
 tests/test_telephony.py      15 signal-property tests
 tests/test_audio_io.py        9 decode-path tests
 tests/test_serve.py           6 HTTP contract tests (no model loaded)
+tests/test_stats.py          17 bootstrap and bucketing tests
 ```
 
 ## License
