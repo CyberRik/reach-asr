@@ -10,22 +10,25 @@ browser MediaRecorder ──▶ reach-app /api/transcribe ──▶ reach-asr /t
    (WebM/Opus or MP4/AAC)      (Next.js, Vercel)          (FastAPI + GPU)
 ```
 
-| WER | zero-shot | fine-tuned |
-|---|---|---|
-| **clean audio** | **4.37%** — the ceiling | *not yet measured* |
-| **degraded audio** | **23.76%** — the baseline | **21.20%** — the result |
+| WER | zero-shot | fine-tuned | change |
+|---|---|---|---|
+| **clean audio** | **4.37%** — the ceiling | **5.24%** | **+0.87 pp** [+0.35, +1.40] |
+| **degraded audio** | **23.76%** — the baseline | **21.20%** — the result | **-2.56 pp** [-3.85, -1.31] |
 
-`whisper-base`, 2000 training utterances, 300 eval utterances. Read that
-honestly: the fine-tune recovered **2.56 of the 19.39 points** the channel cost,
-about 13% of the gap. Real, and modest — see [Results](#results).
+`whisper-base`, 2000 training utterances, 300 eval utterances, 95% paired
+bootstrap intervals over 10,000 resamples. Read it honestly: the fine-tune
+recovered **2.56 of the 19.39 points** the channel cost, about 13% of the gap,
+**and gave up 0.87 points on clean speech to do it**. Both effects are resolved
+— neither interval contains zero.
 
-**The empty cell is the open question.** A LoRA trained only on one narrow
-degraded channel can buy its gain by giving up wideband speech, and at low rank
-that is routine rather than exotic. Until clean/fine-tuned is measured, "it
-learned to handle phone audio" and "it learned to *only* handle phone audio" are
-indistinguishable from this table. The code runs it
-(`--passes clean_finetuned`); the number is not in yet, and nothing here should
-be read as if it were.
+**The trade is the result, not a footnote.** In absolute terms it is roughly 3:1
+in favour of the target condition. In relative terms it inverts: -10.8% on
+degraded audio against **+19.9% on clean**, because the clean baseline is small
+enough that a small absolute regression is a large relative one. Both framings
+are true and quoting only the first is how this gets oversold. For a system
+whose entire deployment surface is telephone audio the trade is worth making
+— but that is a deployment argument, not a measurement one, and it is stated
+here as such.
 
 ---
 
@@ -57,16 +60,20 @@ interviewer could catch by asking one question about the dataset.
 
 ## Results
 
-Three numbers are reported, because any one alone misleads:
+Four numbers are reported — the full 2x2 of audio condition against model
+— because any subset of them misleads:
 
 - **clean / zero-shot** — the ceiling. Without it, a WER figure could be a hard
   corpus or a hard channel and there is no way to tell which.
 - **degraded / zero-shot** — the baseline. The gap to the ceiling is the cost of
   the channel, and it is the only thing fine-tuning can recover.
 - **degraded / fine-tuned** — the result.
+- **clean / fine-tuned** — the specialisation check. What the result cost.
 
 Quoting the third against the *first* would attribute the whole channel cost to
-the fine-tune. That is the standard way this experiment gets oversold.
+the fine-tune. Quoting the first three without the fourth leaves "it learned to
+handle phone audio" and "it learned to *only* handle phone audio"
+indistinguishable. Both are standard ways this experiment gets oversold.
 
 Configuration behind the table above: LoRA r=32, alpha=64 on `q_proj`/`v_proj`,
 2 epochs, lr 1e-4, batch 16 on a Kaggle T4. Channel: 300–3400 Hz passband, G.711
@@ -80,23 +87,76 @@ the model card rather than to a bespoke scoring function. Without it,
 LibriSpeech's uppercase unpunctuated references against Whisper's cased
 punctuated output score ~100% WER for reasons unrelated to recognition.
 
-### The fourth cell
+### The fourth cell, and what it cost
 
 The eval is a 2x2 — audio condition against model — and only three cells were
 originally measured. The missing one, clean audio through the fine-tuned model,
 is the only one that can tell a model that *gained* robustness from one that
-merely *narrowed*: if clean WER stays near 4.37% the ability was kept, and if it
-rises sharply the degraded-audio gain was paid for out of it.
+merely *narrowed*.
 
-`evaluate_wer` now runs all four and reports the clean pair as a **change**, not
-a reduction — a regression there is the expected failure, and naming it a
-"reduction" would invite exactly the misreading the check exists to prevent. A
-subset of `--passes` merges into an existing `wer.json`, so filling in the
-missing cell of a finished run costs one generation pass rather than four:
+It has now been measured, and the model narrowed: **4.37% to 5.24%, +0.87 pp,
+95% CI [+0.35, +1.40]**. The interval excludes zero, so this is a real
+regression rather than sampling noise — but it is a mild one. A LoRA that had
+genuinely collapsed onto the narrow channel would put clean WER in the teens,
+not at 5.24%.
+
+`evaluate_wer` reports the clean pair as a **change**, not a reduction — a
+regression there is the expected failure, and naming it a "reduction" would
+invite exactly the misreading the check exists to prevent. A subset of
+`--passes` merges into an existing `wer.json` *and* into `predictions.jsonl`
+(keyed by utterance id), so the missing cell of a finished run can be filled in
+without re-running the passes that already cost GPU time:
 
 ```bash
-python -m reach_asr.evaluate_wer --model openai/whisper-base     --adapter runs/whisper-lora/adapter --passes clean_finetuned
+python -m reach_asr.evaluate_wer --model openai/whisper-base     --adapter runs/whisper-lora/adapter --passes clean_zeroshot,clean_finetuned
 ```
+
+Both clean passes go in **one** invocation. The paired bootstrap on the clean
+pair needs two sets of hypotheses in the same run; asking for `clean_finetuned`
+alone produces the number without an interval, which is most of the point.
+
+### One curve, not two effects
+
+The SNR breakdown is monotone, and it stays monotone in *relative* terms —
+which is the stronger statement, since it is not merely an artifact of harder
+buckets having more room to improve:
+
+| band | n | zero-shot | fine-tuned | delta | relative |
+|---|---|---|---|---|---|
+| —5 to 0 dB | 99 | 38.19% | 32.53% | 5.67 pp | **14.8%** |
+| 0 to 5 dB | 104 | 20.93% | 19.11% | 1.82 pp | **8.7%** |
+| 5 to 10 dB | 97 | 13.16% | 12.75% | 0.41 pp | **3.1%** |
+| clean | 300 | 4.37% | 5.24% | —0.87 pp | **—19.9%** |
+
+Read the clean regression as the fourth row and the result is one curve rather
+than two unrelated effects: the adapter reallocates capacity along the SNR axis,
+gaining most where the noise is worst and giving it back where there is no noise
+at all. It also lands where the premise says it should — the low-SNR bucket is
+the one that matters for emergency audio, and it is the one that improved most.
+
+The per-bucket deltas do **not** have intervals. At n~100 the 5.67 pp is almost
+certainly real and the 0.41 pp almost certainly is not distinguishable from
+zero, but "almost certainly" is what the bootstrap exists to replace, and it has
+not been run per bucket.
+
+The by-category breakdown that `analyze.py` also prints is **underpowered and
+should not be read as a finding**: five of eleven categories have n <= 9, none
+has an interval, and every negative delta sits in that group. Two artifacts in
+it are worth knowing about, because both are real flaws rather than noise:
+
+- `door_wood_knock` is the largest category (n=69) and by far the easiest
+  (8.88% zero-shot). That is the SNR-labelling flaw showing up in the results:
+  `mix_noise` scales noise to a target **mean** power over the whole clip, so a
+  clip that is three transients in five seconds of silence is nearly absent
+  during the speech. Those 69 utterances carry an `snr_db` label that is not the
+  condition they were scored under, and they pull the corpus mean down. The fix
+  is an active-speech level measurement (ITU-T P.56) on both signals, and
+  measuring the ratio *after* the channel rather than before it — band-limiting
+  is linear and moves speech and noise by different amounts.
+- The category counts are uneven (69 knocks, 8 crying babies) because
+  `load_noise_bank` walks ESC-50 in dataset order until it has 180 clips and
+  `build_dataset` takes the last 20% as the eval bank. The eval noise mix is
+  therefore an artifact of iteration order, not a balanced design.
 
 ### The interval, and the axis
 
